@@ -1,0 +1,91 @@
+{
+ "port": 8090,
+ "backends": {
+  "k2": {
+   "type": "openai",
+   "base_url": "http://127.0.0.1:8080/v1",
+   "model": "k2-horizon:q4k",
+   "api_key": "sk-k2-local",
+   "rank": 0,
+   "desc": "local 4B, private, quick tasks"
+  },
+  "deepseek": {
+   "type": "openai",
+   "base_url": "https://ai-gateway.vercel.sh/v1",
+   "model": "deepseek/deepseek-v4-flash",
+   "auth": "gateway",
+   "rank": 1,
+   "fallbacks": [
+    "glm",
+    "k2"
+   ],
+   "desc": "medium reasoning, cheap, long context"
+  },
+  "glm": {
+   "type": "openai",
+   "base_url": "https://ai-gateway.vercel.sh/v1",
+   "model": "zai/glm-5.3-flash",
+   "auth": "gateway",
+   "rank": 1,
+   "fallbacks": [
+    "deepseek",
+    "k2"
+   ],
+   "desc": "medium reasoning, cheap peer of deepseek"
+  },
+  "luna": {
+   "type": "codex",
+   "model": "gpt-5.6-luna",
+   "auth": "codex",
+   "rank": 2,
+   "desc": "frontier, fast tier (Codex OAuth)",
+   "fallbacks": [
+    "deepseek",
+    "glm",
+    "k2"
+   ]
+  },
+  "terra": {
+   "type": "codex",
+   "model": "gpt-5.6-terra",
+   "auth": "codex",
+   "rank": 3,
+   "desc": "frontier, deepest reasoning (Codex OAuth)",
+   "fallbacks": [
+    "luna",
+    "deepseek",
+    "glm",
+    "k2"
+   ]
+  }
+ },
+ "session": {
+  "ttl_hours": 4,
+  "reeval_turns": 25
+ },
+ "cx_escalation": [
+  2.0,
+  2.4,
+  2.8
+ ],
+ "confidence_floor": 0.36,
+ "session_brain_rules": [
+  {
+   "match": "dream",
+   "tier": "terra",
+   "note": "dream cycles reason across the entire vault"
+  },
+  {
+   "match": "morning breath",
+   "tier": "k2"
+  },
+  {
+   "match": "closing tabs",
+   "tier": "deepseek"
+  },
+  {
+   "match": "weekly rollup",
+   "tier": "deepseek"
+  }
+ ]
+}
