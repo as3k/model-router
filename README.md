@@ -1,9 +1,10 @@
 # Model Router
 
-A "System 1" decision layer in front of a heterogeneous LLM fleet — one small file that
-decides which model every agent request *actually* needs, then dispatches it.
-
-![tier flow](https://img.shields.io/badge/tier-k2%20%E2%86%92%20deepseek%20%E2%86%92%20luna%20%E2%86%92%20terra-blue)
+A small FastAPI service that sits between my agent fleet and its models. Every
+request from every agent on my network passes through it, gets classified by a
+tiny decision model, and gets sent to the cheapest model that can actually do
+the job. Most requests land on a free 4B model running on my GPU. The frontier
+stuff goes to GPT-5.6 only when the task earns it.
 
 ```
 incoming request ──► LAYA (421M decision model, local, ~35ms)
@@ -16,57 +17,73 @@ incoming request ──► LAYA (421M decision model, local, ~35ms)
       free/private        ~$0.042/1M            frontier (Codex OAuth)
 ```
 
-## Why it exists
+## Why I built it
 
-Agentic workloads waste frontier capability on trivial turns, and per-message routing
-made multi-turn agent sessions incoherent — models bouncing mid-task, each losing the
-thread of its own work. This router treats model selection as a **decision problem**,
-solved by purpose-built decision models instead of a bigger LLM guessing.
+Two problems, and they fed each other.
 
-## Design decisions (each one earned in production)
+First, model selection was solved badly. Each message got classified on its own,
+so a 40-turn bug fix bounced between three models and none of them kept the
+thread of their own work. I watched a cron fix take 10 minutes on a task that
+needed tools added, and the reason was right there in the logs: the session
+couldn't hold one brain.
 
-| Decision | The failure that motivated it |
+Second, the fleet paid frontier prices for turns like "what's 2+2".
+
+So model selection became a decision problem, and I gave it to decision models
+instead of a bigger LLM guessing. Laya (a 421M classifier on my CPU) answers
+three questions per request: what capability does this need, how complex is it,
+and what happens if it's wrong. If Laya is unsure, Jev gets a vote. Then the
+request goes to the cheapest tier that can handle it.
+
+## The parts that came from real failures
+
+| Decision | The failure behind it |
 |---|---|
-| **Session pinning** — classify once per session, 0ms after | A 40-turn bug-fix bounced k2→luna→deepseek and flailed for 10 minutes; no model kept its own working memory |
-| **Micro-delegation** — short self-contained interjections handled one-off by the local model | Mid-session "what's 45*12?" ran on a frontier model; but session-referential questions ("what was *your* third recommendation?") need context — the criteria defend against that explicitly |
-| **Jev is a tiebreaker, not a takeover** — vote clamped to +1 tier | Jev returned p=1.00 on the literal string *"testing testing"* and would route noise to the frontier tier |
-| **Escalation-only complexity** | Laya's weakest primitive (ordinal score) inflated trivial input; worst case is now slight overpay, never under-capability |
-| **Stakes ≠ complexity** — a board memo is simple to write but high-stakes | Routine/important/critical stakes check gives biz-critical work a frontier brain regardless of complexity |
-| **Brain declarations** — crons declare their own tier via `brain: terra` in their system prompt | Only the human knows what matters; classification can't see stakes |
-| **Fail-open gate** — watchdog alert triage must never swallow an outage | Deterministic event markers + confidence-earned silence; production: 0 missed events |
-| **Overflow rescue + fallback chains** — requests that can't fit the local model are rescued, provider outages degrade gracefully | k2 400s on oversized payloads; a dead provider once stalled a fleet |
-| **Monotonic promotion** — sessions promote (k2→deepseek→luna), never demote mid-task | Worst case is slight overpay; never an underpowered answer |
+| Session pinning: classify once, then 0ms | A 40-turn bug fix bounced k2→luna→deepseek and flailed for 10 minutes. No model kept its own working memory |
+| Micro-delegation for quick interjections | Mid-session "what's 45*12?" ran on a frontier model. But "what was your third recommendation?" needs session context, so the classifier criteria reject anything that references the ongoing work |
+| Jev can only tiebreak, never take over | Jev returned p=1.00 on the literal string "testing testing" and would route noise to the frontier tier. Its vote is now clamped to one tier above Laya's |
+| Complexity escalates, never demotes | Laya's score primitive inflated trivial input and over-escalated to paid models. Worst case now is slight overpay, never an underpowered answer |
+| Stakes are not complexity | A board memo is simple to write but high stakes. A routine/important/critical check gives biz-critical work the frontier brain regardless of complexity |
+| Crons declare their own brain | A `brain: terra` line in the system prompt beats classification. Only the human knows what matters |
+| Fail-open watchdog gate | An alert gate that swallows an outage is worse than a redundant ping. Production: 0 missed events |
+| Overflow rescue and fallback chains | Requests that can't fit the local model get rescued instead of 400ing. A dead provider degrades instead of stalling the fleet |
 
-## Production numbers (4 days, 4 machines, real agent fleet)
+## Numbers from the first 4 days
 
-- **1,600+ routed decisions**, ~210 watchdog gate checks
-- **56% of traffic on the free local model**; frontier tier reserved for 15% of requests
-- **$2.23 total** estimated spend (deepseek at $0.042/1M input tokens)
-- **0 missed watchdog events** across 210 gate checks
-- Classification: ~390ms median (local Laya), ~2s when the Jev tiebreaker is consulted
-- 6 concurrent classifications complete in 1.8s wall (threaded, non-serializing)
+1,606 routing decisions and 216 watchdog gate checks across 4 machines (nexus,
+lunamor, oathgate, claw).
+
+- deepseek handled 72% of routes, luna 15%, k2 12%. Terra ran 26 times.
+- Total inference spend: $2.25 (deepseek at $0.042/1M input tokens, everything
+  else free or subscription)
+- Watchdog gate: 216 checks, 71 notifies. Every single notify came from
+  deterministic event rules. Zero missed events.
+- Classification overhead: ~400ms median when laya decides, ~2s when jev gets
+  consulted. Pinned turns pay zero.
+- 6 parallel classifications finish in 1.8s wall (threaded, not serialized).
 
 ## Endpoints
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/chat/completions` | OpenAI-compatible proxy (streaming + non-streaming, tools supported) |
-| `POST /v1/routing` | Dry-run: tier decision without an LLM call |
-| `GET /v1/recent?n=10` | Last N decisions with full decision trail (probability distributions, escalations, text excerpt) |
-| `GET /v1/stats` | Aggregates: by tier/via/day, escalations, overflow rescues, cost estimate |
-| `GET /v1/gate` | Watchdog alert triage: `notify`/`silent` with fail-open semantics |
+| `POST /v1/chat/completions` | OpenAI-compatible proxy (streaming and non-streaming, tools supported) |
+| `POST /v1/routing` | Dry run: tier decision without an LLM call |
+| `GET /v1/recent?n=10` | Last N decisions with the full trail: probability distributions, escalations, text excerpt |
+| `GET /v1/stats` | Aggregates by tier/via/day, escalations, overflow rescues, cost estimate |
+| `GET /v1/gate` | Watchdog alert triage: notify or silent, fail-open |
 | `GET /health` | Liveness + backend list |
 
-Client controls: pin a tier via the `model` field, inline `@tier` tags anywhere in the
-last user message (mid-message supported), or declare a session's brain in its system
-prompt (`brain: terra`).
+Clients can pin a tier with the `model` field, drop an `@tier` tag anywhere in
+the last user message, or declare a session brain in the system prompt
+(`brain: terra`).
 
 ## Stack
 
-Python · FastAPI · httpx (async streaming) · [Laya](https://huggingface.co/convaiinnovations/laya)
-(Apache 2.0 decision model, CPU-resident) · Jev via Vercel AI Gateway · local
-llama-server (llama.cpp fork) · OpenAI Codex (responses-API → chat-SSE conversion) ·
-systemd user service on a Tailscale-networked homelab.
+Python, FastAPI, httpx for async streaming, [Laya](https://huggingface.co/convaiinnovations/laya)
+(421M decision model, Apache 2.0, runs on CPU), Jev through Vercel AI Gateway, a
+local llama.cpp server for the 4B tier, and OpenAI Codex behind a responses-API
+to chat-SSE converter. Runs as a systemd user service on a Tailscale-networked
+homelab.
 
 ## Running it
 
@@ -75,15 +92,15 @@ pip install fastapi uvicorn httpx "laya[fast]"
 uvicorn router:app --host <tailnet-ip> --port 8090
 ```
 
-Personal paths are env-parameterized (`ROUTER_AUTH_FILE`, `ROUTER_LOG`, `ROUTER_STATS`).
-Configure your own backends in `config.json` — the fleet here is an example, not a
-requirement.
+Personal paths are env-parameterized (`ROUTER_AUTH_FILE`, `ROUTER_LOG`,
+`ROUTER_STATS`). Set up your own backends in `config.json`; the fleet here is
+an example, not a requirement.
 
-## Production notes (2.5 days of fleet traffic)
+## What the first 4 days taught me
 
-- 1,600+ routing decisions across 4 machines; $2.23 total inference spend
-- Watchdog gate: 210 checks, 69 notifies — **all caught by deterministic rules**,
-  0 missed events
-- Session pinning holds multi-turn agent coherence (see `via=session` records)
-- The hardest-won lesson is in the code comments: every guard here was added the
-  day something went wrong.
+The guards in this code are all scar tissue. Context overflow taught the
+rescue logic. Jev's confidence on the string "testing testing" taught the
+clamp. Session-referential interjections that fooled the micro-delegation
+check taught the stricter criteria. A swallowed watchdog alert would have been
+worse than all of them, which is why the gate fails open. Every guard here
+went in the day something went wrong.

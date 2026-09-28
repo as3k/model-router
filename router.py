@@ -1,76 +1,50 @@
 #!/usr/bin/env python3
-"""Model Router — a "System 1" decision layer in front of a heterogeneous LLM fleet.
+#!/usr/bin/env python3
+"""Model Router: a decision layer that sits between my agent fleet and its models.
 
-WHAT THIS IS
-------------
-A ~850-line FastAPI service that sits between AI agents and their models, acting
-like the front desk of a company: it reads every incoming request, decides which
-tier of intelligence it actually requires, and forwards it — usually to a free,
-local model — reserving expensive frontier models for work that genuinely needs them.
+I run a bunch of AI agents (cron jobs, interactive assistants, subagents) on a
+Tailscale-networked homelab. Before this router, every request went to whichever
+model the agent was configured with, which meant two problems: I paid frontier
+prices for turns like "what's 2+2", and when I tried classifying each message
+separately, agent sessions bounced between models mid-task and lost the thread
+of their own work.
 
-WHY
----
-Agentic workloads waste enormous capability on trivial turns ("what's 2+2?" hitting
-GPT-5-class models), while at the same time all-baskets-one-model setups either
-overpay or underperform. This router treats model selection as a *decision problem*
-solved by purpose-built decision models rather than by a bigger LLM guessing.
+The fix has three parts:
 
-THE THREE INGREDIENTS
----------------------
-1. Laya (local, CPU-resident, ~35ms/forward-pass): a 421M-parameter non-autoregressive
-   "System 1" decision model. It never generates text; it answers typed questions
-   (choice/score) with calibrated probabilities in a single forward pass.
-   Three questions per request: required capability tier, task complexity, and stakes.
-2. Jev (via Vercel AI Gateway): a commercial decision model used as a tiebreaker
-   when Laya is unsure — and as a *cheap* local gate (notify/silent) for watchdog alerts.
-3. A tiered backend fleet with strict escalation-only semantics:
-     k2 (local 4B llama-server) -> deepseek-v4-flash -> gpt-5.6-luna -> gpt-5.6-terra
-   Every escalation path can only move a request UP a tier, never down mid-task.
+1. Laya, a 421M "System 1" decision model (local, CPU, ~35ms per forward pass).
+   It never generates text. It answers typed questions about a request with
+   calibrated probabilities: what capability tier does this need, how complex is
+   it, and what are the stakes if it's wrong.
+2. Jev, a commercial decision model through Vercel AI Gateway, as a tiebreaker
+   when Laya is unsure. It also powers /v1/gate, a notify/silent triage endpoint
+   for watchdog alerts.
+3. A tiered fleet with escalation-only semantics:
+   k2 (local 4B llama.cpp server) -> deepseek-v4-flash -> gpt-5.6-luna -> gpt-5.6-terra
 
-THE DESIGN DECISIONS THAT MATTER
---------------------------------
-* SESSION PINNING: agents are coherent precisely because one brain owns a task
-  chain. Classifying per-message made sessions bounce between models, each losing
-  the thread of its own work-in-progress. So the router classifies ONCE per session
-  (keyed by a hash of the system prompt), pins the tier, and serves subsequent turns
-  with zero classification overhead. Promotion is monotonic (never demote mid-task);
-  sessions expire after an idle TTL.
-* MICRO-DELEGATION: short, self-contained interjections inside a substantive session
-  ("what's 45*12?" mid-analysis) get handled one-off by the local model — a cheap
-  single-question check — so the session's main brain is never disturbed for noise.
-* BRAIN DECLARATIONS: cron jobs and scheduled agents declare their own tier via a
-  `brain: terra` line in their system prompt (or name-based config rules). Complexity
-  ≠ stakes: a board memo is simple to write but high-stakes, so scheduled work that
-  matters declares its brain explicitly rather than trusting classification.
-* JEV IS A TIEBREAKER, NOT A TAKEOVER: when consulted, Jev's vote is clamped to at
-  most one tier above Laya's choice — its probability distributions are razor-sharp
-  (0.99+ even on noise), and an unclamped vote over-routed trivial traffic.
-* FAIL-OPEN GATE: the /v1/gate endpoint (watchdog alert triage) must never swallow
-  an outage. Deterministic event markers (exited/failed/restarted...) short-circuit
-  to notify before any model runs; low-confidence "silent" verdicts notify instead;
-  classifier failure notifies. A dead gate can only over-notify, never under-notify.
-* OVERFLOW RESCUE: requests that physically cannot fit the local model's context are
-  rescued to the next tier instead of erroring — with repeated rescues promoting the
-  whole session, so a session that doesn't fit k2 stops trying.
-* FALLBACK CHAINS: backend failures walk a configured fallback list (deepseek <-> glm
-  -> k2, codex tiers included) so a provider outage degrades gracefully instead of
-  failing the agent.
-* NOTHING IS TRUSTED: the client can pin a tier (model name), override inline
-  (@tier tags anywhere in the message), or dry-run the decision (/v1/routing) —
-  but every request is still guarded (context-fit, output clamping) before dispatch.
+Design decisions worth calling out (each one earned in production, details inline):
 
-OBSERVABILITY
--------------
-Every decision is logged twice: a human-readable line (router.log) and a rich JSON
-record (stats.jsonl) containing the full Laya/Jev probability distributions, the
-classified text excerpt, latency, and escalation reasons. Aggregate stats, recent
-decisions, and cost estimates are served over HTTP (/v1/stats, /v1/recent).
+- Session pinning: classify once per session, then 0ms routing for every turn
+  after. Agents need one coherent brain per task, not the best model per message.
+- Micro-delegation: short self-contained interjections get handled one-off by
+  the local model without disturbing the session's pinned brain.
+- Brain declarations: crons declare their tier with a "brain: terra" line in
+  their system prompt. Laya judges complexity; only the human knows stakes.
+- Jev is a tiebreaker, not a takeover. Its vote is clamped to one tier above
+  Laya's choice, because its distributions are so confident it once returned
+  p=1.00 on the string "testing testing".
+- Fail-open watchdog gate. A redundant ping is noise; a swallowed outage is an
+  incident. The gate can over-notify, never under-notify.
+- Overflow rescue and fallback chains. Requests that can't fit the local model
+  get rescued to the next tier, and dead providers degrade instead of failing.
 
-This file runs as a systemd user service on my homelab box ("nexus"), reachable
-only over a Tailscale network — the fleet's machines (my laptop, a VPS, a Pi)
-share one tailnet, which is the trust boundary; the router has no auth of its own.
+Every decision is logged twice: a human-readable line (router.log) and a JSON
+record (stats.jsonl) with the full Laya/Jev probability distributions, the
+classified text excerpt, and latency. Aggregates, recent decisions, and cost
+estimates are served over HTTP (/v1/stats, /v1/recent).
 
-Personal paths are parameterized below via ROUTER_* env vars.
+Runs as a systemd user service on my homelab box, reachable only over
+Tailscale. The tailnet is the trust boundary; the router has no auth of its
+own. Personal paths are parameterized via ROUTER_* env vars below.
 """
 import asyncio
 import json
@@ -141,7 +115,7 @@ SESSION_CFG = CONFIG.get("session", {"ttl_hours": 4, "reeval_turns": 25})
 SUBAGENT_MARKERS = ["cron job", "scheduled", "subagent", "worker", "delegated",
                     "you are running as"]
 # MICRO-DELEGATION question: the criteria are written to defend against the
-# failure mode observed in production — session-referential interjections
+# failure mode observed in production: session-referential interjections
 # ("what was your third recommendation?") LOOK self-contained to a classifier
 # but require accumulated context. The "session" option explicitly wins ties:
 # a missed downshift costs pennies; a context-free answer costs trust.
@@ -186,7 +160,7 @@ router_laya = Router(preload=["english"], device=os.environ.get("LAYA_DEVICE", "
 
 async def laya_decide(state: str):
     # Laya's predict() is a blocking forward pass. Agents fire concurrent
-    # requests (subagent fan-outs, cron bursts) — running it in a thread keeps
+    # requests (subagent fan-outs, cron bursts), so running it in a thread keeps
     # the async event loop free so classifications happen in parallel, not
     # serialized behind each other. (Measured: 6 parallel classifications in
     # 1.8s wall vs ~11s serialized.)
@@ -268,7 +242,7 @@ async def micro_delegate(body: dict, home_tier: str) -> dict | None:
     if any(m.get("role") == "tool" for m in body.get("messages", [])):
         return None  # tool-result turns are never light
     if any(mk in lmsg.lower() for mk in ("continue", "step ", "analyze", "design", "review", "implement")):
-        return None  # task-continuation words — stay home
+        return None  # task-continuation words mean stay home
     try:
         def _ask():
             a = router_laya.predict(lmsg, MICRO_QUESTIONS)["answers"]["delegate"]
@@ -312,7 +286,7 @@ async def decide(state: str, force: str | None = None, est_tokens: int = 0) -> d
                 d["laya_tier"] = RANKS[laya_rank]
         except Exception as e:
             log.warning(f"jev fallback failed: {e}")
-    # Complexity escalation — deliberately asymmetric. Laya's score primitive is
+    # Complexity escalation is deliberately asymmetric. Laya's score primitive is
     # its weakest (the model card admits ordinal scoring underperforms), and it
     # inflated trivial input ("Testing 123" scored 1.35/4, which under naive
     # absolute bands over-escalated to a paid cloud model). So thresholds are
@@ -329,12 +303,12 @@ async def decide(state: str, force: str | None = None, est_tokens: int = 0) -> d
             d["tier"] = RANKS[rank]
             d["escalated_by"] = "complexity"
     # NOTE: length-based k2 escalation lives in the request handlers (chat/
-    # routing_probe) — it depends on the real payload size incl. tools.
+    # routing_probe) because it depends on the real payload size incl. tools.
     return d
 
 
 def _gate_laya_sync(state: str):
-    """Sync wrapper: laya predict is CPU/GPU work — run in a thread."""
+    """Sync wrapper: laya predict is CPU/GPU work, so run in a thread."""
     res = router_laya.predict(state, GATE_QUESTIONS)
     a = res["answers"]["notify"]
     conf = a.get("answer_confidence") or a.get("probabilities", {}).get(a["choice"], 0)
@@ -363,7 +337,7 @@ async def gate_jev(state: str):
 
 # GATE: watchdog alert triage (notify the human vs stay silent). The design
 # invariant: a dead or confused gate may only ever over-notify, never
-# under-notify — a redundant ping is noise, a swallowed outage is an incident.
+# under-notify: a redundant ping is noise, a swallowed outage is an incident.
 #
 # Layer 1: deterministic event markers. These words unambiguously mean
 # "something happened" regardless of surrounding context ("back up, healthy
@@ -398,7 +372,7 @@ def _marker_hits(state_lower: str) -> list:
 
 async def gate_decide(state: str) -> dict:
     """Layer 2: model arbitration of ambiguous alerts, still fail-open.
-    Silence must be EARNED with confidence — anything else notifies.
+    Silence must be earned with confidence. Anything else notifies.
     (Production: 210 checks, 0 missed events.)"""
     low = state.lower()
     hits = _marker_hits(low)
@@ -664,7 +638,7 @@ async def chat(req: Request):
     est_tokens = len(ser) * 10 // 44  # measured ~4.4 chars/token on pi payloads
     t0 = time.time()
 
-    # ---- SESSION PINNING: the heart of the coherence story ----
+    # ---- SESSION PINNING: classify once per session, not per turn ----
     # Per-message routing made agent sessions incoherent: a 40-turn bug-fix
     # bounced between three models, each losing the thread of its own work,
     # while paying ~2s of judge overhead per turn (~80s/session). Instead:
@@ -677,7 +651,7 @@ async def chat(req: Request):
     d = None
     if not force and sess:
         # Pinned turn: skip classification entirely. This is where the session
-        # coherence pays off — the same model that started the task finishes it.
+        # coherence pays off: the same model that started the task finishes it.
         tier = sess["tier"]
         sess["turns"] += 1
         sess["since_reeval"] += 1
@@ -691,7 +665,7 @@ async def chat(req: Request):
         # loses capability. So: cheap single-question check, and if Laya is
         # CONFIDENT the interjection is fully self-contained, hand just this
         # one turn to the local model. Session-referential turns ("what was
-        # your third recommendation?") stay home — they need the context.
+        # your third recommendation?") stay home. They need the context.
         if sess.get("kind") == "main" and tier in ("deepseek", "luna", "terra"):
             md = await micro_delegate(body, tier)
             if md:
@@ -715,7 +689,7 @@ async def chat(req: Request):
     elif not force:
         # first turn of a session: full classification, then pin.
         # Explicit brain: directive in the system prompt, or name-based rules,
-        # outrun classification — some crons need a bigger brain by design.
+        # outrun classification. Some crons need a bigger brain by design.
         brain = declared_brain(body) or rule_brain(body)
         if brain:
             d = {"tier": brain, "via": "declared", "tier_conf": 1.0,
@@ -729,7 +703,7 @@ async def chat(req: Request):
             low = sysprompt.lower()
             kind = "subagent" if any(mk in low for mk in SUBAGENT_MARKERS) else "main"
             if kind == "main" and d["tier"] == "k2" and not brain:
-                # main sessions never pin k2 — home floor is deepseek
+                # main sessions never pin k2: home floor is deepseek
                 d["tier"] = "deepseek"
                 d["escalated_by"] = "main-session-floor"
             _sessions[sess_key] = {"tier": d["tier"], "ts": now, "turns": 1,
@@ -738,12 +712,12 @@ async def chat(req: Request):
             _save_sessions()
         d["pinned"] = True
         d["session"] = sess_key[:8] if sess_key else None
-    if d is None:  # forced tier this turn (client pin or @tag) — no session write
+    if d is None:  # forced tier this turn (client pin or @tag), no session write
         d = await decide(state, force=force, est_tokens=est_tokens)
     tier = d["tier"]
     b = CONFIG["backends"][tier]
     # OVERFLOW RESCUE: the local model's context is finite (32K). Full agentic
-    # payloads (system prompt + 22 tool schemas + history) can exceed it — and
+    # payloads (system prompt + 22 tool schemas + history) can exceed it, and
     # the client's own truncation doesn't count tool schemas. Instead of a 400,
     # rescue to the next tier; after repeated rescues, promote the session so
     # it stops retrying a brain that can't hold it.
