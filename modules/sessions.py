@@ -8,7 +8,7 @@ classification runs once (first turn) instead of on every message.
 import json
 import time
 
-from settings import SESSIONS_FILE, log
+from modules.settings import SESSIONS_FILE, log
 
 SESSION_CFG_KEY = "session"
 _sessions = {}

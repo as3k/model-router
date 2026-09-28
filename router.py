@@ -19,15 +19,13 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-import classify
-import dispatch
-import stats_store
-from classify import (RANKS, FORCE_TIERS, SESSION_CFG, SUBAGENT_MARKERS,
+from modules import classify, dispatch, stats_store
+from modules.classify import (RANKS, FORCE_TIERS, SESSION_CFG, SUBAGENT_MARKERS,
                       decide, gate_decide, detect_tag, declared_brain,
                       micro_delegate, rule_brain, session_key, state_from_messages)
-from dispatch import complete_openai, stream_openai
-from sessions import _sessions, save as save_sessions, expired as session_expired
-from settings import CONFIG, ROOT, log
+from modules.dispatch import complete_openai, stream_openai
+from modules.sessions import _sessions, save as save_sessions, expired as session_expired
+from modules.settings import CONFIG, ROOT, log
 
 # ---------------------------------------------------------------- app
 app = FastAPI()

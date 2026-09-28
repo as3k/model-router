@@ -83,13 +83,14 @@ the last user message, or declare a session brain in the system prompt
 ## Layout
 
 ```
-router.py       FastAPI app: endpoints, session orchestration (~220 lines)
-classify.py     Laya/Jev deciders, routing policy, gate logic (~330 lines)
-questions.py    The decision-model question dicts (behavior lives here)
-sessions.py     Session registry: pin, promote, expire
-dispatch.py     Backend dispatch: streaming + fallback chains across openai/codex
-stats_store.py  Decision-trail persistence (stats.jsonl) + aggregation
-settings.py     Config, paths, credentials
+router.py           FastAPI app: endpoints, session orchestration (~220 lines)
+modules/
+  classify.py       Laya/Jev deciders, routing policy, gate logic
+  questions.py      The decision-model question dicts (behavior lives here)
+  sessions.py       Session registry: pin, promote, expire
+  dispatch.py       Backend dispatch: streaming + fallback chains (openai/codex)
+  stats_store.py    Decision-trail persistence (stats.jsonl) + aggregation
+  settings.py       Config, paths, credentials
 ```
 
 ## Stack

@@ -5,7 +5,7 @@ append_route(), /v1/recent reads recent_rows(), /v1/stats reads aggregate().
 """
 import json
 
-from settings import CONFIG, STATS_FILE, log
+from modules.settings import CONFIG, STATS_FILE, log
 
 
 def append_route(record: dict):

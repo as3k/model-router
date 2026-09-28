@@ -4,7 +4,7 @@ import logging
 import os
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).parent.parent  # router home (config.json, logs, stats live here)
 CONFIG = json.loads((ROOT / "config.json").read_text())
 LOG_FILE = ROOT / os.environ.get("ROUTER_LOG", "router.log")
 STATS_FILE = ROOT / os.environ.get("ROUTER_STATS", "stats.jsonl")

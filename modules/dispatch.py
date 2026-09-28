@@ -2,7 +2,7 @@
 fallback across openai and codex backends (k2 -> deepseek -> luna -> terra)."""
 import json
 
-from settings import CONFIG, ROOT, log, gateway_key, codex_auth
+from modules.settings import CONFIG, ROOT, log, gateway_key, codex_auth
 
 client = None  # shared httpx AsyncClient, set by router.py
 

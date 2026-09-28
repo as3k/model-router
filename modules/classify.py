@@ -14,8 +14,8 @@ import warnings
 
 from laya import Router
 
-from questions import LAYA_QUESTIONS, GATE_QUESTIONS, MICRO_QUESTIONS
-from settings import CONFIG, log, gateway_key, codex_auth
+from modules.questions import LAYA_QUESTIONS, GATE_QUESTIONS, MICRO_QUESTIONS
+from modules.settings import CONFIG, log, gateway_key, codex_auth
 
 warnings.filterwarnings("ignore")
 
