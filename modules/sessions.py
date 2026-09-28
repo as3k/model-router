@@ -9,6 +9,7 @@ import json
 import time
 
 from modules.settings import SESSIONS_FILE, log
+from modules.classify import SUBAGENT_MARKERS
 
 SESSION_CFG_KEY = "session"
 _sessions = {}

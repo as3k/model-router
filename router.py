@@ -76,8 +76,6 @@ async def gate(req: Request):
         return {"label": "silent", "confidence": 1.0, "via": "empty", "notify": False}
     t0 = time.time()
     d = await gate_decide(state)
-    t0 = time.time()
-    d = await gate_decide(state)
     ms = int((time.time() - t0) * 1000)
     log.info(f"gate -> {d['label']:<7} conf={d['conf']:.2f} via={d['via']} classify={ms}ms")
     record = {"type": "gate", "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
