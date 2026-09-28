@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 """Model Router: a decision layer that sits between my agent fleet and its models.
 
 I run a bunch of AI agents (cron jobs, interactive assistants, subagents) on a
@@ -62,7 +61,7 @@ ROOT = Path(__file__).parent
 CONFIG = json.loads((ROOT / "config.json").read_text())
 LOG_FILE = ROOT / os.environ.get("ROUTER_LOG", "router.log")
 STATS_FILE = ROOT / os.environ.get("ROUTER_STATS", "stats.jsonl")
-AUTH_FILE = Path(os.environ.get("ROUTER_AUTH_FILE", "/home/zg/.pi/agent/auth.json"))
+AUTH_FILE = Path(os.environ.get("ROUTER_AUTH_FILE", Path.home() / ".pi/agent/auth.json"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -132,7 +131,7 @@ MICRO_QUESTIONS = {
 _sessions = {}
 try:
     _sessions = json.loads(SESSIONS_FILE.read_text())
-except (FileNotFoundError, Exception):
+except Exception:
     _sessions = {}
 
 
@@ -207,13 +206,6 @@ async def jev_decide(state: str):
         "cx_conf": None,
         "via": "jev",
     }
-
-
-def _micro_laya_sync(state: str):
-    res = router_laya.predict(state, MICRO_QUESTIONS)
-    a = res["answers"]["delegate"]
-    conf = a.get("answer_confidence") or a.get("probabilities", {}).get(a["choice"], 0)
-    return a["choice"], conf
 
 
 def _micro_laya_sync(state: str):
@@ -526,11 +518,6 @@ async def recent(n: int = 10):
     return {"decisions": list(reversed(rows[-n:]))}
 
 
-@app.get("/health")
-async def health():
-    return {"ok": True, "backends": list(CONFIG["backends"])}
-
-
 @app.get("/v1/stats")  # persistent usage stats (survives router.log rotation)
 async def stats():
     rows = []
@@ -607,8 +594,6 @@ async def gate(req: Request):
     state = body.get("text") or body.get("state") or ""
     if not state.strip():
         return {"label": "silent", "confidence": 1.0, "via": "empty", "notify": False}
-    t0 = time.time()
-    d = await gate_decide(state)
     t0 = time.time()
     d = await gate_decide(state)
     ms = int((time.time() - t0) * 1000)
@@ -763,9 +748,6 @@ async def chat(req: Request):
     except Exception as e:
         log.warning(f"stats append failed: {e}")
     rid = f"rtr_{int(time.time()*1000)}"
-
-    async def relay():
-        return tier, b, d, rid
 
     if body.get("stream"):
         return StreamingResponse(stream_openai(body, tier, b, d, rid),

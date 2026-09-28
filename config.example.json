@@ -71,21 +71,12 @@
  "confidence_floor": 0.36,
  "session_brain_rules": [
   {
-   "match": "dream",
-   "tier": "terra",
-   "note": "dream cycles reason across the entire vault"
-  },
-  {
-   "match": "morning breath",
-   "tier": "k2"
-  },
-  {
-   "match": "closing tabs",
+   "match": "nightly-digest",
    "tier": "deepseek"
   },
   {
-   "match": "weekly rollup",
-   "tier": "deepseek"
+   "match": "vault-scan",
+   "tier": "terra"
   }
  ]
 }

@@ -46,22 +46,24 @@ request goes to the cheapest tier that can handle it.
 | Complexity escalates, never demotes | Laya's score primitive inflated trivial input and over-escalated to paid models. Worst case now is slight overpay, never an underpowered answer |
 | Stakes are not complexity | A board memo is simple to write but high stakes. A routine/important/critical check gives biz-critical work the frontier brain regardless of complexity |
 | Crons declare their own brain | A `brain: terra` line in the system prompt beats classification. Only the human knows what matters |
-| Fail-open watchdog gate | An alert gate that swallows an outage is worse than a redundant ping. Production: 0 missed events |
+| Fail-open watchdog gate | An alert gate that swallows an outage is worse than a redundant ping. Production: no missed events observed |
 | Overflow rescue and fallback chains | Requests that can't fit the local model get rescued instead of 400ing. A dead provider degrades instead of stalling the fleet |
 
 ## Numbers from the first 4 days
 
-1,606 routing decisions and 216 watchdog gate checks across 4 machines (nexus,
-lunamor, oathgate, claw).
+1,606 routing decisions and 216 watchdog gate checks across 3 machines
+(nexus, lunamor, oathgate).
 
 - deepseek handled 72% of routes, luna 15%, k2 12%. Terra ran 26 times.
 - Total inference spend: $2.25 (deepseek at $0.042/1M input tokens, everything
   else free or subscription)
-- Watchdog gate: 216 checks, 71 notifies. Every single notify came from
-  deterministic event rules. Zero missed events.
-- Classification overhead: ~400ms median when laya decides, ~2s when jev gets
-  consulted. Pinned turns pay zero.
-- 6 parallel classifications finish in 1.8s wall (threaded, not serialized).
+- Watchdog gate: 216 checks, 71 notifies. Every notify came from
+  deterministic event rules, and every silence was reviewed against the source
+  alert. No swallowed alerts found.
+- Classification overhead: ~1.5s median when laya decides (three questions on
+  CPU), ~2s when jev gets consulted, 0 on pinned turns.
+- 6 parallel classifications finish in 1.9s wall; per-probe latency barely moves
+  with concurrency (threaded, not serialized).
 
 ## Endpoints
 
