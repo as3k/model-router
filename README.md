@@ -80,6 +80,18 @@ Clients can pin a tier with the `model` field, drop an `@tier` tag anywhere in
 the last user message, or declare a session brain in the system prompt
 (`brain: terra`).
 
+## Layout
+
+```
+router.py       FastAPI app: endpoints, session orchestration (~220 lines)
+classify.py     Laya/Jev deciders, routing policy, gate logic (~330 lines)
+questions.py    The decision-model question dicts (behavior lives here)
+sessions.py     Session registry: pin, promote, expire
+dispatch.py     Backend dispatch: streaming + fallback chains across openai/codex
+stats_store.py  Decision-trail persistence (stats.jsonl) + aggregation
+settings.py     Config, paths, credentials
+```
+
 ## Stack
 
 Python, FastAPI, httpx for async streaming, [Laya](https://huggingface.co/convaiinnovations/laya)
@@ -96,8 +108,9 @@ uvicorn router:app --host <tailnet-ip> --port 8090
 ```
 
 Personal paths are env-parameterized (`ROUTER_AUTH_FILE`, `ROUTER_LOG`,
-`ROUTER_STATS`). Set up your own backends in `config.json`; the fleet here is
-an example, not a requirement.
+`ROUTER_STATS`). Set your own backends in `config.json`; the fleet here is an
+example, not a requirement. `stats.jsonl` stores a short excerpt of each
+classified text locally; clear the file if that matters for your data.
 
 ## What the first 4 days taught me
 
