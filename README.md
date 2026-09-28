@@ -1,5 +1,8 @@
 # Model Router
 
+<img width="1080" height="675" alt="image" src="https://github.com/user-attachments/assets/b724d0b7-b4ee-4bfa-84c7-95e94728819d" />
+
+
 A small FastAPI service that sits between my agent fleet and its models. Every
 request from every agent on my network passes through it, gets classified by a
 tiny decision model, and gets sent to the cheapest model that can actually do
