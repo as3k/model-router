@@ -93,6 +93,13 @@ modules/
   settings.py       Config, paths, credentials
 ```
 
+## Agent etiquette
+
+`AGENTS.md` in this repo covers the edit rules agents follow when working on
+the router: backup-then-clean-up in `backups/`, restart + smoke check, the
+test battery, and the standing constraints (tailnet-only, CPU-only laya,
+never gpt-via-gateway).
+
 ## Stack
 
 Python, FastAPI, httpx for async streaming, [Laya](https://huggingface.co/convaiinnovations/laya)
