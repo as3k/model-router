@@ -3,8 +3,9 @@
 A small FastAPI service that sits between my agent fleet and its models. Every
 request from every agent on my network passes through it, gets classified by a
 tiny decision model, and gets sent to the cheapest model that can actually do
-the job. Most requests land on a free 4B model running on my GPU. The frontier
-stuff goes to GPT-5.6 only when the task earns it.
+the job. In practice that's a cheap cloud model (deepseek at $0.042/1M tokens)
+for most full agentic sessions, a free 4B model on my GPU for short contexts
+and quick interjections, and GPT-5.6 only for the tasks that earn it.
 
 ```
 incoming request ──► LAYA (421M decision model, local, ~35ms)
