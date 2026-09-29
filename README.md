@@ -98,6 +98,11 @@ modules/
 
 ## Agent etiquette
 
+The session registry records two tiers per session: `declared_tier` (the intent,
+from a `brain:` declaration or first-turn classification) and `serving_tier` (what
+actually handles turns now — they diverge when overflow promotion moves a session
+off a brain it can't fit).
+
 `AGENTS.md` in this repo covers the edit rules agents follow when working on
 the router: backup-then-clean-up in `backups/`, restart + smoke check, the
 test battery, and the standing constraints (tailnet-only, CPU-only laya,
