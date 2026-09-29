@@ -19,7 +19,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from modules import classify, dispatch, stats_store
+from modules import classify, compact, dispatch, stats_store
 from modules.classify import (RANKS, FORCE_TIERS, SESSION_CFG, SUBAGENT_MARKERS,
                       decide, gate_decide, detect_tag, declared_brain,
                       micro_delegate, rule_brain, session_key, state_from_messages)
@@ -32,6 +32,7 @@ app = FastAPI()
 client = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=15))
 classify.client = client
 dispatch.client = client
+compact.client = client
 
 
 @app.get("/health")
@@ -169,9 +170,28 @@ async def chat(req: Request):
     tier = d["tier"]
     b = CONFIG["backends"][tier]
     # k2 fit: ctx 32768. Prompt alone must fit; output gets the remainder.
+    # Overflow first tries COMPACTION (summarize old turns, keep recent ones
+    # verbatim) so declared-k2 sessions stay on k2; rescue to deepseek only
+    # when compaction isn't possible or the compacted payload still overflows.
     K2_CTX = 32768
     if tier == "k2":
-        if est_tokens > 30000:
+        if est_tokens > 30000 and sess_key and sess:
+            from modules import compact
+            try:
+                c = await compact.maybe_compact(client, body, sess, sess_key)
+            except Exception as e:
+                log.warning(f"compaction failed: {e}")
+                c = None
+            if c:
+                body = {**body, "messages": c["messages"]}
+                est_tokens = (len(json.dumps(c["messages"])) +
+                              len(json.dumps(body.get("tools", [])))) * 10 // 44
+                d["compacted"] = True
+                d["compact_span"] = c["span_messages"]
+                save_sessions()  # persist the compact state (summary + prefix hash)
+                log.info(f"compacted session {sess_key[:8]}: summarized "
+                         f"{c['span_messages']} messages, new est {est_tokens}")
+        if tier == "k2" and est_tokens > 30000:
             log.warning(f"k2 overflow rescue: est prompt {est_tokens} > 30000 -> deepseek")
             tier = d["tier"] = "deepseek"
             b = CONFIG["backends"][tier]
@@ -198,6 +218,7 @@ async def chat(req: Request):
               "tag": tag, "classify_ms": ms,
               "escalated_by": d.get("escalated_by"),
               "overflow": bool(d.get("forced_k2_overflow")),
+                  "compacted": bool(d.get("compacted")), "compact_span": d.get("compact_span"),
               "session": sess_key[:8] if sess_key else None,
               "pinned": bool(d.get("pinned")), "turn": d.get("turn"),
               "laya": {"tier": d.get("tier") if d.get("via") == "laya" else d.get("laya_tier"),
@@ -216,6 +237,7 @@ async def chat(req: Request):
     out = await complete_openai(body, tier, b, rid)
     out["router"] = {"tier": tier, "backend_model": b["model"], "via": d["via"],
                      "confidence": round(d["tier_conf"], 2), "complexity": d.get("complexity"),
-                     "classify_ms": ms}
+                     "classify_ms": ms, "compacted": bool(d.get("compacted")),
+                     "compact_span": d.get("compact_span")}
     return JSONResponse(out, headers={"X-Router-Tier": tier, "X-Router-Via": d["via"],
                                       "X-Router-Confidence": f"{d['tier_conf']:.2f}"})
