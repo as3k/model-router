@@ -59,16 +59,28 @@
    ]
   }
  },
- "session": {
-  "ttl_hours": 4,
-  "reeval_turns": 25
+ "default_tier": "deepseek",
+ "confidence_floor": 0.36,
+ "jev": {
+  "url": "https://ai-gateway.vercel.sh/v1/evaluate",
+  "model": "typesafe-ai/jev"
  },
  "cx_escalation": [
   2.0,
   2.4,
   2.8
  ],
- "confidence_floor": 0.36,
+ "stats_prices_per_mtok_input": {
+  "k2": 0,
+  "deepseek": 0.042,
+  "glm": 0.042,
+  "luna": 0,
+  "terra": 0
+ },
+ "spend_guardrails": {
+  "daily_soft_usd": 2.0,
+  "daily_hard_usd": 5.0
+ },
  "session_brain_rules": [
   {
    "match": "nightly-digest",

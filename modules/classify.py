@@ -16,6 +16,7 @@ from laya import Router
 
 from modules.questions import LAYA_QUESTIONS, GATE_QUESTIONS, MICRO_QUESTIONS
 from modules.settings import CONFIG, log, gateway_key, codex_auth
+from modules.spend import tracker as spend_tracker
 
 warnings.filterwarnings("ignore")
 
@@ -23,7 +24,11 @@ RANKS = ["k2", "deepseek", "luna", "terra"]
 FORCE_TIERS = RANKS + ["glm"]
 
 TAG_RE = re.compile(r"@(k2|deepseek|glm|luna|terra)\b", re.IGNORECASE)
-BRAIN_RE = re.compile(r"brain\s*[:=]\s*(k2|deepseek|glm|luna|terra)\b", re.IGNORECASE)
+# Anchored to a standalone line: the directive must be the whole line.
+# Doc examples like "Declare `brain: k2` in your prompt" or "(or brain=k2)"
+# sit mid-sentence inside vault files that get loaded as session context, and
+# an unanchored regex hijacks those sessions to the example's tier.
+BRAIN_RE = re.compile(r"(?m)^[^\S\n]*brain\s*[:=]\s*(k2|deepseek|glm|luna|terra)[^\S\n]*$", re.IGNORECASE)
 
 router_laya = Router(preload=["english"], device=os.environ.get("LAYA_DEVICE", "cuda"))
 
@@ -146,7 +151,9 @@ async def decide(state: str, force: str | None = None, est_tokens: int = 0) -> d
             return {"tier": CONFIG["default_tier"], "tier_conf": 0.0, "complexity": None,
                     "cx_conf": None, "via": "default"}
     floor = CONFIG["confidence_floor"]
-    if d["tier_conf"] < floor and d["via"] == "laya":
+    # spend guard hard limit: laya decides alone — the jev tiebreaker is skipped
+    # (explicit @tier/forced requests bypass this whole path already).
+    if d["tier_conf"] < floor and d["via"] == "laya" and not spend_tracker.hard_active:
         try:
             j = await jev_decide(state)
             d["jev"] = {k: j[k] for k in ("tier", "tier_conf")}
