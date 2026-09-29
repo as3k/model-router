@@ -51,6 +51,10 @@ request goes to the cheapest tier that can handle it.
 | Crons declare their own brain | A `brain: terra` line in the system prompt beats classification. Only the human knows what matters |
 | Fail-open watchdog gate | An alert gate that swallows an outage is worse than a redundant ping. Production: no missed events observed |
 | Overflow rescue and fallback chains | Requests that can't fit the local model get rescued instead of 400ing. A dead provider degrades instead of stalling the fleet |
+| Circuit breaker | A provider outage made every request eat a timeout before falling back. Failed backends are now deprioritized for a cooldown instead of retried first |
+| Quality auto-escalation | Confused or refusing answers from a cheap tier went unnoticed. Non-streaming responses are checked and retried one tier up when they miss the question |
+| Interactive priority | Cron fan-outs delayed the user's typing session on the single-slot local model. Main sessions now dispatch before scheduled bursts |
+| Spend guardrails | Nothing stopped a runaway loop from burning money overnight. Daily soft limit warns through the alert gate; hard limit downgrades automatic escalations |
 
 ## Numbers from the first 4 days
 
