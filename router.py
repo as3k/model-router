@@ -108,10 +108,11 @@ async def chat(req: Request):
     d = None
     if not force and sess:
         # pinned: zero classification cost this turn
-        tier = sess["tier"]
+        tier = sess["serving_tier"]
         sess["turns"] += 1
         sess["since_reeval"] += 1
         sess["ts"] = now
+        save_sessions()  # keep the persisted registry current per turn
         d = {"tier": tier, "via": "session", "tier_conf": sess.get("conf", 1.0),
              "complexity": None, "pinned": True, "session": sess_key[:8],
              "turn": sess["turns"], "kind": sess.get("kind", "main")}
@@ -134,7 +135,7 @@ async def chat(req: Request):
                 tier = nd["tier"]
                 d.update(tier=tier, via="session-reeval", conf=nd["tier_conf"],
                          complexity=nd.get("complexity"))
-            sess["tier"] = tier
+            sess["serving_tier"] = tier
             sess["since_reeval"] = 0
             save_sessions()
     elif not force:
@@ -157,9 +158,9 @@ async def chat(req: Request):
                 # main sessions never pin k2: home floor is deepseek
                 d["tier"] = "deepseek"
                 d["escalated_by"] = "main-session-floor"
-            _sessions[sess_key] = {"tier": d["tier"], "ts": now, "turns": 1,
+            _sessions[sess_key] = {"serving_tier": d["tier"], "ts": now, "turns": 1,
                                    "since_reeval": 0, "conf": d["tier_conf"],
-                                   "overflows": 0, "kind": kind, "brain": brain}
+                                   "overflows": 0, "kind": kind, "declared_tier": brain}
             save_sessions()
         d["pinned"] = True
         d["session"] = sess_key[:8] if sess_key else None
@@ -176,10 +177,10 @@ async def chat(req: Request):
             b = CONFIG["backends"][tier]
             d["escalated_by"] = "length"
             d["forced_k2_overflow"] = True
-            if sess and sess.get("tier") == "k2":
+            if sess and sess.get("serving_tier") == "k2":
                 sess["overflows"] = sess.get("overflows", 0) + 1
                 if sess["overflows"] >= 2:  # this session simply doesn't fit k2
-                    sess["tier"] = "deepseek"
+                    sess["serving_tier"] = "deepseek"
                     log.info(f"session {sess_key[:8]} promoted to deepseek after {sess['overflows']} overflows")
                     save_sessions()
         else:
