@@ -132,6 +132,16 @@ Personal paths are env-parameterized (`ROUTER_AUTH_FILE`, `ROUTER_LOG`,
 example, not a requirement. `stats.jsonl` stores a short excerpt of each
 classified text locally; clear the file if that matters for your data.
 
+## On-demand local tier
+
+The local 4B is stopped+disabled by default in my setup: k2's unique value is
+privacy and offline work, and idle GPU memory is worth more than an always-on
+model. `~/bin/k2-tier on|off|status` controls it. When k2 is off, k2-tier
+requests fall back to ling automatically (connection-refused fails fast, the
+circuit breaker deprioritizes k2, ling serves the turn). No router changes
+were needed for this — the fallback chain earned its keep the day k2 got
+idled.
+
 ## What the first 4 days taught me
 
 The guards in this code are all scar tissue. Context overflow taught the
