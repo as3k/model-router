@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from modules import classify, compact, dispatch, spend, stats_store
 from modules.spend import tracker as spend_tracker
-from modules.classify import (RANKS, FORCE_TIERS, SESSION_CFG, SUBAGENT_MARKERS,
+from modules.classify import (RANKS, FORCE_TIERS, SESSION_CFG, SUBAGENT_MARKERS, last_user_msg,
                       decide, gate_decide, detect_tag, declared_brain,
                       micro_delegate, rule_brain, session_key, state_from_messages)
 from modules.dispatch import complete_openai, stream_openai
@@ -67,6 +67,25 @@ async def stats():
     return stats_store.aggregate()
 
 
+@app.post("/v1/feedback")  # explicit outcome signal: agents rate a turn
+async def feedback(req: Request):
+    body = await req.json()
+    outcome = body.get("outcome")
+    if outcome not in ("good", "bad"):
+        return JSONResponse({"error": "outcome must be 'good' or 'bad'"}, status_code=400)
+    record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+              "outcome": outcome, "source": body.get("source", "agent"),
+              "session": (body.get("session") or "")[:12],
+              "tier": body.get("tier"), "note": str(body.get("note", ""))[:300]}
+    stats_store.append_outcome(record)
+    return {"ok": True, "recorded": record}
+
+
+@app.get("/v1/outcomes")  # tier-level outcome view: re-asks, escalations, rescues
+async def outcomes():
+    return JSONResponse(stats_store.outcomes_summary())
+
+
 @app.post("/v1/routing")  # dry run: decision only, no backend call
 async def routing_probe(req: Request):
     body = await req.json()
@@ -78,7 +97,7 @@ async def routing_probe(req: Request):
            len(json.dumps(body.get("tools", [])))) * 10 // 44
     d = await decide(state, force=force, est_tokens=est)
     if d["tier"] == "k2" and est > 30000:
-        d["tier"] = "deepseek"
+        d["tier"] = "ling" if "ling" in CONFIG["backends"] else "deepseek"
         d["escalated_by"] = "length"
         d["forced_k2_overflow"] = True
     b = CONFIG["backends"][d["tier"]]
@@ -219,16 +238,19 @@ async def chat(req: Request):
                 if body.get("max_tokens", 0) > allowed_out:
                     body = {**body, "max_tokens": allowed_out}
             else:
-                log.warning(f"k2 overflow rescue: est prompt {est_tokens} > 30000 -> deepseek")
-                tier = d["tier"] = "deepseek"
+                # rescue goes to LING first (free, fast, no local ingestion lag);
+                # ling failure falls back to deepseek via the dispatch chain.
+                rescue = "ling" if "ling" in CONFIG["backends"] else "deepseek"
+                log.warning(f"k2 overflow rescue: est prompt {est_tokens} > 30000 -> {rescue}")
+                tier = d["tier"] = rescue
                 b = CONFIG["backends"][tier]
                 d["escalated_by"] = "length"
                 d["forced_k2_overflow"] = True
                 if sess and sess.get("serving_tier") == "k2":
                     sess["overflows"] = sess.get("overflows", 0) + 1
                     if sess["overflows"] >= 2:  # this session simply doesn't fit k2
-                        sess["serving_tier"] = "deepseek"
-                        log.info(f"session {sess_key[:8]} promoted to deepseek after {sess['overflows']} overflows")
+                        sess["serving_tier"] = rescue
+                        log.info(f"session {sess_key[:8]} promoted to {rescue} after {sess['overflows']} overflows")
                         save_sessions()
         else:
             allowed_out = max(1024, K2_CTX - est_tokens - 512)
@@ -264,7 +286,7 @@ async def chat(req: Request):
                         "tier_probs": d.get("tier_probs"),
                         "stakes": d.get("stakes"), "stakes_probs": d.get("stakes_probs")},
               "jev": d.get("jev"),
-              "state_excerpt": state[:200]}
+              "state_excerpt": state[:200], "user_text": last_user_msg(body)[:120]}
     rid = f"rtr_{int(time.time()*1000)}"
 
     if body.get("stream"):
