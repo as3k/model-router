@@ -7,19 +7,23 @@
    "model": "k2-horizon:q4k",
    "api_key": "sk-k2-local",
    "rank": 0,
-   "desc": "local 4B, private, quick tasks"
+   "desc": "local 4B, private, quick tasks",
+   "fallbacks": [
+    "ling",
+    "deepseek"
+   ]
   },
   "deepseek": {
    "type": "openai",
    "base_url": "https://ai-gateway.vercel.sh/v1",
-   "model": "deepseek/deepseek-v4-flash",
+   "model": "zai/glm-5.3-flash",
    "auth": "gateway",
-   "rank": 1,
+   "rank": 2,
    "fallbacks": [
     "glm",
     "k2"
    ],
-   "desc": "medium reasoning, cheap, long context"
+   "desc": "multimodal workhorse: coding, docs, vision, long ctx"
   },
   "glm": {
    "type": "openai",
@@ -57,6 +61,18 @@
     "glm",
     "k2"
    ]
+  },
+  "ling": {
+   "type": "openai",
+   "base_url": "https://ai-gateway.vercel.sh/v1",
+   "model": "inclusionai/ling-3.1-flash-free",
+   "auth": "gateway",
+   "rank": 1,
+   "fallbacks": [
+    "deepseek",
+    "k2"
+   ],
+   "desc": "free gateway model: fast, no local ingestion lag"
   }
  },
  "default_tier": "deepseek",
@@ -67,15 +83,17 @@
  },
  "cx_escalation": [
   2.0,
-  2.4,
+  2.3,
+  2.5,
   2.8
  ],
  "stats_prices_per_mtok_input": {
   "k2": 0,
-  "deepseek": 0.042,
-  "glm": 0.042,
+  "deepseek": 0.035,
+  "glm": 0.035,
   "luna": 0,
-  "terra": 0
+  "terra": 0,
+  "ling": 0.0
  },
  "spend_guardrails": {
   "daily_soft_usd": 2.0,
